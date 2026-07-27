@@ -31,17 +31,26 @@ pip install "betterframe[dask]"  # to drive Dask frames as well
 ## Use
 
 ```python
-from betterframe import ops_for
+from betterframe import BetterFrame
 
 
-def compute(frame):
-    ops = ops_for(frame)  # frame may be Dask or pandas
-    frame = ops.mutable(frame)
-    frame["scaled"] = frame["value"] * 2
-    frame = ops.apply(frame, normalise, meta=lambda: build_meta(ops.meta_source(frame)))
-    result = frame.groupby("key").agg({"scaled": "sum"}, **ops.agg_kwargs(frame))
-    return ops.finalize(result)
+def compute(records):
+    frame = BetterFrame(records).mutable()  # records may be Dask or pandas
+    frame = frame.apply(normalise, meta=lambda: build_meta(frame.meta_source()))
+    result = frame.pipe(
+        lambda df, kw=frame.agg_kwargs(): df.groupby("key").agg({"scaled": "sum"}, **kw)
+    )
+    return result.finalize()
 ```
+
+`BetterFrame` binds a frame to the operations its engine needs, so the frame
+stops being an argument to every call. Methods that produce a frame return a
+`BetterFrame`, so a pipeline chains; `finalize()` ends the chain and hands back
+a native frame, and `native` reaches the underlying one at any point.
+
+It is deliberately thin — it does **not** proxy the dataframe API. Real work
+still happens on the frame itself, through `pipe()` or `native`. Wrapping exists
+to answer engine questions, not to replace pandas.
 
 The same function now runs on either engine, and there is exactly one place —
 this package — that knows the difference.
@@ -68,10 +77,10 @@ whose fixtures happen to be fully populated.
 ## Extending
 
 Subclass `DaskOps` / `PandasOps` for engine-specific behaviour of your own —
-custom aggregations, say — and hand the subclasses to `ops_for`:
+custom aggregations, say — and hand the subclasses to `BetterFrame`:
 
 ```python
-from betterframe import DaskOps, PandasOps, ops_for
+from betterframe import BetterFrame, DaskOps, PandasOps
 
 
 class MyDaskOps(DaskOps):
@@ -84,7 +93,8 @@ class MyPandasOps(PandasOps):
         return some_pandas_callable
 
 
-ops = ops_for(frame, dask_ops=MyDaskOps, pandas_ops=MyPandasOps)
+frame = BetterFrame(records, dask_ops=MyDaskOps, pandas_ops=MyPandasOps)
+frame.ops.set_union()  # `ops` reaches engine questions that take no frame
 ```
 
 Domain-specific aggregations are deliberately left out of the core so the

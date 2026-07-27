@@ -1,9 +1,10 @@
 """Engine differences between Dask and pandas frames, isolated in one place.
 
 An aggregation pipeline that must run on either engine otherwise fills up with
-``if is_dask:`` branches. This lets the pipeline be written once: ask
-:func:`ops_for` for the right operations object and work through it, so only
-one small module knows which engine is in play.
+``if is_dask:`` branches. These classes hold the differences so the pipeline can
+be written once. Most callers do not use them directly -- they go through
+:class:`~betterframe.BetterFrame`, which binds a frame to the right one -- but
+they are the extension point for adding engine-specific behaviour of your own.
 
 Most of the surface is mechanical -- ``map_partitions(fn)`` versus ``fn(df)``,
 ``persist()`` versus nothing. The part worth reading is how the pandas side
@@ -29,7 +30,7 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
-__all__ = ["DaskOps", "DataFrameOps", "PandasOps", "is_dask_frame", "ops_for"]
+__all__ = ["DaskOps", "DataFrameOps", "MetaSource", "PandasOps", "is_dask_frame"]
 
 
 def is_dask_frame(df: Any) -> bool:
@@ -53,7 +54,7 @@ class DataFrameOps:
 
     Subclass :class:`DaskOps` or :class:`PandasOps` to add engine-specific
     behaviour of your own -- custom aggregations, for instance -- and pass the
-    subclasses to :func:`ops_for`.
+    subclasses to :class:`~betterframe.BetterFrame`.
     """
 
     #: Whether this implementation drives a Dask frame.
@@ -187,17 +188,3 @@ class MetaSource:
     def __init__(self, df: Any) -> None:
         self.columns = df.columns
         self._meta = df.iloc[:0]
-
-
-def ops_for(
-    df: Any,
-    *,
-    dask_ops: type[DataFrameOps] = DaskOps,
-    pandas_ops: type[DataFrameOps] = PandasOps,
-) -> DataFrameOps:
-    """Operations object for whichever engine ``df`` belongs to.
-
-    Pass ``dask_ops`` / ``pandas_ops`` to substitute subclasses carrying your
-    own engine-specific behaviour.
-    """
-    return dask_ops() if is_dask_frame(df) else pandas_ops()
