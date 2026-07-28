@@ -10,6 +10,8 @@ Public API:
 - :class:`DaskOps` / :class:`PandasOps` -- subclass to add engine-specific
   behaviour of your own, and pass to :class:`BetterFrame`
 - :func:`is_dask_frame` -- engine test that does not import Dask needlessly
+- set aggregations via ``frame.ops.set_union()`` /
+  ``frame.ops.set_union_flatten()``, which neither engine provides
 
 Example::
 
@@ -35,4 +37,4 @@ __all__ = [
     "is_dask_frame",
 ]
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"

@@ -74,6 +74,36 @@ not silently a different dtype depending on which engine produced it. This is
 the failure mode BetterFrame exists to prevent: it is invisible in every test
 whose fixtures happen to be fully populated.
 
+## Set aggregations
+
+Neither engine ships one — pandas has no set aggregation at all, and Dask needs
+a three-stage `Aggregation` whose chunk and combine steps have to agree. Both
+are provided, and both return `frozenset`, so a value aggregated one way
+compares equal to the same value aggregated the other:
+
+```python
+bf = BetterFrame(records)
+grouped = records.groupby("key").agg(
+    {
+        "name": bf.ops.set_union(),  # distinct values -> frozenset
+        "tags": bf.ops.set_union_flatten(),
+    },  # union of set-valued cells
+    **bf.agg_kwargs(),
+)
+```
+
+Flattening is built on [betterset](https://github.com/izzet/betterset), which
+handles what a naive `set().union(*values)` gets wrong:
+
+| input | `set().union(*values)` | `set_union_flatten` |
+|---|---|---|
+| `["abc"]` | `{"a", "b", "c"}` — string shredded | `{"abc"}` |
+| `[42, {"d"}]` | `TypeError` | `{42, "d"}` |
+| `[None, {"d"}]` | `TypeError` | `{"d"}` |
+
+The string case is the one that bites: it silently turns a set of names into a
+set of letters, and nothing raises.
+
 ## Extending
 
 Subclass `DaskOps` / `PandasOps` for engine-specific behaviour of your own —

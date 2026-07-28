@@ -30,6 +30,13 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
+from .aggregations import (
+    dask_set_union,
+    dask_set_union_flatten,
+    pandas_set_union,
+    pandas_set_union_flatten,
+)
+
 __all__ = ["DaskOps", "DataFrameOps", "MetaSource", "PandasOps", "is_dask_frame"]
 
 
@@ -83,6 +90,14 @@ class DataFrameOps:
         """Extra keyword arguments for ``groupby().agg()`` on this engine."""
         raise NotImplementedError
 
+    def set_union(self) -> Any:
+        """Aggregation collecting a column's distinct values into a frozenset."""
+        raise NotImplementedError
+
+    def set_union_flatten(self) -> Any:
+        """Aggregation unioning a column's set-valued entries into a frozenset."""
+        raise NotImplementedError
+
     def finalize(self, df: Any) -> Any:
         """Make the result concrete, if the engine has such a notion."""
         raise NotImplementedError
@@ -116,6 +131,12 @@ class DaskOps(DataFrameOps):
     def agg_kwargs(self, df):
         # one output partition per input partition
         return {"split_out": df.npartitions}
+
+    def set_union(self):
+        return dask_set_union()
+
+    def set_union_flatten(self):
+        return dask_set_union_flatten()
 
     def finalize(self, df):
         return df.persist()
@@ -166,6 +187,12 @@ class PandasOps(DataFrameOps):
     def agg_kwargs(self, df):
         # `split_out` is a Dask partitioning concern with no pandas equivalent
         return {}
+
+    def set_union(self):
+        return pandas_set_union
+
+    def set_union_flatten(self):
+        return pandas_set_union_flatten
 
     def finalize(self, df):
         return df

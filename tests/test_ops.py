@@ -328,3 +328,86 @@ def test_ops_subclass_survives_chaining(frame):
     out = BetterFrame(frame, pandas_ops=Tagged).apply(add_column)
     assert isinstance(out.ops, Tagged)
     assert out.ops.tag == "mine"
+
+
+# --- set aggregations --------------------------------------------------------
+
+
+@pytest.fixture
+def set_frame():
+    return pd.DataFrame(
+        {
+            "g": ["x", "x", "y", "y"],
+            "name": ["alpha", "beta", "gamma", None],
+            "tags": [
+                frozenset({"a", "b"}),
+                frozenset({"b", "c"}),
+                frozenset({"d"}),
+                None,
+            ],
+        }
+    )
+
+
+def _agg(frame, column, aggregation_name):
+    bf = BetterFrame(frame)
+    agg = getattr(bf.ops, aggregation_name)()
+    out = frame.groupby("g").agg({column: agg}, **bf.agg_kwargs())
+    return out.compute() if bf.is_dask else out
+
+
+def test_set_union_matches_across_engines(set_frame):
+    on_pandas = _agg(set_frame, "name", "set_union")
+    on_dask = _agg(dd.from_pandas(set_frame, npartitions=2), "name", "set_union")
+    assert on_pandas["name"].to_dict() == on_dask["name"].to_dict()
+    assert on_pandas["name"]["x"] == frozenset({"alpha", "beta"})
+
+
+def test_set_union_flatten_matches_across_engines(set_frame):
+    on_pandas = _agg(set_frame, "tags", "set_union_flatten")
+    on_dask = _agg(
+        dd.from_pandas(set_frame, npartitions=2), "tags", "set_union_flatten"
+    )
+    assert on_pandas["tags"].to_dict() == on_dask["tags"].to_dict()
+    assert on_pandas["tags"]["x"] == frozenset({"a", "b", "c"})
+
+
+def test_both_engines_return_frozensets(set_frame):
+    on_pandas = _agg(set_frame, "tags", "set_union_flatten")
+    on_dask = _agg(
+        dd.from_pandas(set_frame, npartitions=2), "tags", "set_union_flatten"
+    )
+    assert all(isinstance(v, frozenset) for v in on_pandas["tags"])
+    assert all(isinstance(v, frozenset) for v in on_dask["tags"])
+
+
+def test_nulls_are_dropped_not_propagated(set_frame):
+    """Group 'y' has a null in both columns; it must not poison the result."""
+    assert _agg(set_frame, "name", "set_union")["name"]["y"] == frozenset({"gamma"})
+    assert _agg(set_frame, "tags", "set_union_flatten")["tags"]["y"] == frozenset({"d"})
+
+
+def test_strings_stay_atomic_when_flattened():
+    """The trap a naive set().union(*values) falls into: a string is iterable,
+    so unioning would turn a set of names into a set of letters."""
+    frame = pd.DataFrame({"g": ["x", "x"], "tags": ["abc", frozenset({"d"})]})
+    result = _agg(frame, "tags", "set_union_flatten")["tags"]["x"]
+    assert result == frozenset({"abc", "d"}), result
+    assert "a" not in result
+
+
+def test_scalars_mixed_with_collections_do_not_raise():
+    """set().union(*values) raises on a bare scalar; flattening must not."""
+    frame = pd.DataFrame({"g": ["x", "x"], "tags": [42, frozenset({"d"})]})
+    assert _agg(frame, "tags", "set_union_flatten")["tags"]["x"] == frozenset({42, "d"})
+
+
+def test_aggregations_survive_repartitioning(set_frame):
+    """The Dask chunk and combine stages must agree however the data is split."""
+    results = [
+        _agg(dd.from_pandas(set_frame, npartitions=n), "tags", "set_union_flatten")[
+            "tags"
+        ].to_dict()
+        for n in (1, 2, 4)
+    ]
+    assert results[0] == results[1] == results[2]
