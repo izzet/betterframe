@@ -125,6 +125,37 @@ No library can recover the values once that has happened -- the conversion
 occurs at construction, upstream of anything BetterFrame sees. If you hold sets
 in a column, turn the conversion off.
 
+## Deciding when to defer
+
+Dask earns its overhead on data that does not fit in memory and charges it
+regardless. Choosing between the engines needs a size, and the obvious ways to
+get one defeat the purpose -- on a lazy frame they execute the very work you
+were trying to avoid:
+
+| | partitions executed |
+|---|---|
+| `len(frame)` | 4 |
+| `frame.memory_usage_per_partition().sum().compute()` | 4 |
+| `BetterFrame(frame).nbytes()` | **0** |
+
+`nbytes()` returns what the scheduler already knows and `None` otherwise. It
+never computes and never waits -- and since `persist()` is asynchronous, `None`
+is the common answer, not an edge case.
+
+So `materialize_if_under` lets the caller supply a bound it can justify:
+
+```python
+frame = BetterFrame(records).materialize_if_under(
+    256 * 1024**2,
+    fallback_bound=records.npartitions
+    * PARTITION_SIZE_BYTES,  # your partitioning policy
+)
+```
+
+It returns a pandas-backed `BetterFrame` when it materialises and the original
+otherwise, so callers need no branch. With neither a known size nor a bound, the
+frame is left alone rather than guessed at.
+
 ## Extending
 
 Subclass `DaskOps` / `PandasOps` for engine-specific behaviour of your own —

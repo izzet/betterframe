@@ -102,6 +102,39 @@ class BetterFrame:
         """Something a Dask meta builder can read ``.columns`` and ``._meta`` from."""
         return self._ops.meta_source(self._frame)
 
+    def nbytes(self) -> int | None:
+        """Materialised size in bytes, or ``None`` if it cannot be known cheaply.
+
+        Never triggers a computation and never waits for one. On Dask that means
+        the answer is only available once ``persist()`` has actually finished;
+        until then it is ``None``, because waiting would impose a cost on
+        exactly the large frames this question exists to protect.
+        """
+        return self._ops.nbytes(self._frame)
+
+    def materialize_if_under(
+        self, max_bytes: int, *, fallback_bound: int | None = None
+    ) -> BetterFrame:
+        """Bring the frame into memory when it is provably smaller than a limit.
+
+        Uses :meth:`nbytes` when the size is already known. When it is not --
+        the common case, since ``persist()`` is asynchronous -- ``fallback_bound``
+        is used instead: an upper bound the *caller* can justify, typically from
+        its own partitioning policy (``npartitions * partition_size``). Without
+        one, an unknown size means the frame is left alone rather than guessed at.
+
+        Returns a pandas-backed ``BetterFrame`` when it materialises, and self
+        otherwise, so callers need no branch of their own.
+        """
+        if not self.is_dask:
+            return self
+        size = self.nbytes()
+        if size is None:
+            size = fallback_bound
+        if size is None or size > max_bytes:
+            return self
+        return BetterFrame(self._ops.materialize(self._frame))
+
     def finalize(self) -> Any:
         """Make the result concrete and return the native frame."""
         return self._ops.finalize(self._frame)

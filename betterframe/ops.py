@@ -98,6 +98,20 @@ class DataFrameOps:
         """Aggregation unioning a column's set-valued entries into a frozenset."""
         raise NotImplementedError
 
+    def nbytes(self, df: Any) -> int | None:
+        """Materialised size in bytes, or ``None`` if it cannot be known cheaply.
+
+        Never triggers a computation, and never waits for one. A caller sizing
+        a frame to decide whether to bring it into memory must not pay for the
+        answer -- that would impose a cost on exactly the large inputs the
+        question exists to protect.
+        """
+        raise NotImplementedError
+
+    def materialize(self, df: Any) -> Any:
+        """Bring the frame into memory as pandas."""
+        raise NotImplementedError
+
     def finalize(self, df: Any) -> Any:
         """Make the result concrete, if the engine has such a notion."""
         raise NotImplementedError
@@ -137,6 +151,31 @@ class DaskOps(DataFrameOps):
 
     def set_union_flatten(self):
         return dask_set_union_flatten()
+
+    def nbytes(self, df):
+        """Size the scheduler already knows, or None.
+
+        ``persist()`` is asynchronous, so partitions that have not finished are
+        simply absent from the scheduler's map. That is reported as unknown
+        rather than guessed at, and never waited for.
+        """
+        try:
+            from distributed import futures_of
+
+            futures = futures_of(df)
+            if not futures:
+                return None
+            known = futures[0].client.nbytes(summary=False) or {}
+            sizes = [known.get(f.key) for f in futures]
+            if any(size is None for size in sizes):
+                return None
+            return int(sum(sizes))
+        except Exception:  # noqa: BLE001 - any failure means the size is simply
+            # not knowable cheaply, which is what None communicates
+            return None
+
+    def materialize(self, df):
+        return df.compute()
 
     def finalize(self, df):
         return df.persist()
@@ -193,6 +232,13 @@ class PandasOps(DataFrameOps):
 
     def set_union_flatten(self):
         return pandas_set_union_flatten
+
+    def nbytes(self, df):
+        # already in memory, so measuring it computes nothing
+        return int(df.memory_usage(deep=True).sum())
+
+    def materialize(self, df):
+        return df
 
     def finalize(self, df):
         return df

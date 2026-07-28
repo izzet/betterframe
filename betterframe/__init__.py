@@ -12,6 +12,8 @@ Public API:
 - :func:`is_dask_frame` -- engine test that does not import Dask needlessly
 - set aggregations via ``frame.ops.set_union()`` /
   ``frame.ops.set_union_flatten()``, which neither engine provides
+- ``frame.nbytes()`` / ``frame.materialize_if_under(...)`` to choose between the
+  engines without paying for the question
 
 Example::
 
@@ -37,4 +39,4 @@ __all__ = [
     "is_dask_frame",
 ]
 
-__version__ = "0.2.1"
+__version__ = "0.3.0"

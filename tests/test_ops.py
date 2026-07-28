@@ -448,3 +448,112 @@ def test_convert_string_corrupts_set_columns_before_aggregation():
         "if this passes, dask stopped stringifying and the docs can drop the warning"
     )
     assert any("frozenset" in str(v) for v in mangled)
+
+
+# --- sizing and materialisation ----------------------------------------------
+
+
+@pytest.fixture
+def client():
+    from distributed import Client, LocalCluster
+
+    cluster = LocalCluster(
+        n_workers=1,
+        threads_per_worker=2,
+        processes=False,
+        protocol="tcp",
+        dashboard_address=":0",
+    )
+    client = Client(cluster)
+    yield client
+    client.close()
+    cluster.close()
+
+
+def test_nbytes_reports_a_pandas_frame_directly(frame):
+    assert BetterFrame(frame).nbytes() == int(frame.memory_usage(deep=True).sum())
+
+
+def test_nbytes_reports_a_persisted_dask_frame(frame, client):
+    from distributed import wait
+
+    persisted = dd.from_pandas(frame, npartitions=2).persist()
+    wait(persisted)
+    assert BetterFrame(persisted).nbytes() > 0
+
+
+def test_nbytes_is_unknown_rather_than_guessed_for_lazy_frames(frame, client):
+    """persist() is asynchronous and a lazy frame has no size at all. Reporting
+    None is the point: the alternative is waiting, which costs exactly what the
+    question is trying to avoid."""
+    lazy = dd.from_pandas(frame, npartitions=2)[lambda d: d["v"] > 0]
+    assert BetterFrame(lazy).nbytes() is None
+
+
+def test_nbytes_never_triggers_computation(frame, client, tmp_path):
+    """The contract that makes this usable as a gate."""
+    from distributed import wait
+
+    marker = tmp_path / "calls"
+    marker.write_text("")
+
+    def counted(df):
+        with marker.open("a") as handle:
+            handle.write("x")
+        return df
+
+    persisted = dd.from_pandas(frame, npartitions=2).persist()
+    wait(persisted)
+    lazy = persisted.map_partitions(counted)  # work downstream of the boundary
+
+    before = len(marker.read_text())
+    BetterFrame(lazy).nbytes()
+    assert len(marker.read_text()) == before, "sizing must not execute the chain"
+
+
+def test_materialize_if_under_brings_a_small_frame_into_memory(frame, client):
+    from distributed import wait
+
+    persisted = dd.from_pandas(frame, npartitions=2).persist()
+    wait(persisted)
+    out = BetterFrame(persisted).materialize_if_under(10**9)
+    assert not out.is_dask
+    pd.testing.assert_frame_equal(out.native.sort_index(), frame)
+
+
+def test_materialize_if_under_leaves_a_large_frame_alone(frame, client):
+    from distributed import wait
+
+    persisted = dd.from_pandas(frame, npartitions=2).persist()
+    wait(persisted)
+    out = BetterFrame(persisted).materialize_if_under(1)
+    assert out.is_dask
+
+
+def test_materialize_if_under_uses_the_callers_bound_when_size_is_unknown(
+    frame, client
+):
+    """The usual case: persist() has not finished, so the caller supplies an
+    upper bound it can justify from its own partitioning."""
+    lazy = dd.from_pandas(frame, npartitions=2)
+    assert BetterFrame(lazy).nbytes() is None
+
+    assert (
+        BetterFrame(lazy).materialize_if_under(10**9, fallback_bound=1).is_dask is False
+    )
+    assert (
+        BetterFrame(lazy).materialize_if_under(10, fallback_bound=10**9).is_dask is True
+    )
+
+
+def test_materialize_if_under_leaves_the_frame_alone_when_nothing_is_known(
+    frame, client
+):
+    """No size and no bound means no guess."""
+    lazy = dd.from_pandas(frame, npartitions=2)
+    assert BetterFrame(lazy).materialize_if_under(10**9).is_dask
+
+
+def test_materialize_if_under_is_a_noop_for_pandas(frame):
+    bf = BetterFrame(frame)
+    assert bf.materialize_if_under(1) is bf
