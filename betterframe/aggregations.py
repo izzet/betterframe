@@ -15,6 +15,14 @@ cases a naive ``set().union(*values)`` gets wrong:
 
 Both engines return :class:`frozenset`, so a value aggregated one way compares
 equal to the same value aggregated the other.
+
+.. warning::
+
+   Dask's ``dataframe.convert-string`` is on by default and rewrites object
+   columns to its string dtype at construction, turning a column of sets into a
+   column of their reprs before any aggregation runs. Set
+   ``dask.config.set({"dataframe.convert-string": False})`` when a column holds
+   sets; nothing downstream can recover the values otherwise.
 """
 
 from __future__ import annotations

@@ -104,6 +104,27 @@ handles what a naive `set().union(*values)` gets wrong:
 The string case is the one that bites: it silently turns a set of names into a
 set of letters, and nothing raises.
 
+### Dask stringifies set-valued columns unless you stop it
+
+Dask's `dataframe.convert-string` is **on by default**, and it rewrites object
+columns to its own string dtype when a frame is constructed. A column holding
+sets is turned into a column holding their *reprs*, before any aggregation runs:
+
+```python
+frame = pd.DataFrame({"g": ["x", "x"], "tags": ["abc", frozenset({"d"})]})
+
+dd.from_pandas(frame, npartitions=1)  # tags dtype -> string
+# set_union_flatten now yields {"abc", "frozenset({'d'})"}
+
+with dask.config.set({"dataframe.convert-string": False}):
+    dd.from_pandas(frame, npartitions=1)  # tags dtype -> object
+# set_union_flatten yields {"abc", "d"}
+```
+
+No library can recover the values once that has happened -- the conversion
+occurs at construction, upstream of anything BetterFrame sees. If you hold sets
+in a column, turn the conversion off.
+
 ## Extending
 
 Subclass `DaskOps` / `PandasOps` for engine-specific behaviour of your own —

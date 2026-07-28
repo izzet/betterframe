@@ -411,3 +411,40 @@ def test_aggregations_survive_repartitioning(set_frame):
         for n in (1, 2, 4)
     ]
     assert results[0] == results[1] == results[2]
+
+
+def test_flattening_mixed_types_matches_across_engines():
+    """The mixed scalar/string/set case, on both engines rather than pandas alone.
+
+    Note this relies on the column being genuine object dtype. Dask's
+    `dataframe.convert-string` (on by default, disabled for these tests) would
+    otherwise rewrite the column to its string dtype at construction, turning
+    each set into its repr before any aggregation runs.
+    """
+    frame = pd.DataFrame({"g": ["x", "x", "x"], "tags": ["abc", frozenset({"d"}), 42]})
+    expected = frozenset({"abc", "d", 42})
+
+    on_pandas = _agg(frame, "tags", "set_union_flatten")["tags"]["x"]
+    on_dask = _agg(dd.from_pandas(frame, npartitions=2), "tags", "set_union_flatten")[
+        "tags"
+    ]["x"]
+
+    assert on_pandas == expected, on_pandas
+    assert on_dask == expected, on_dask
+
+
+def test_convert_string_corrupts_set_columns_before_aggregation():
+    """Documents the trap: with Dask's default string conversion, a set-valued
+    object column is stringified at construction, so no aggregation can recover
+    it. Callers holding sets in a column must turn that conversion off."""
+    frame = pd.DataFrame({"g": ["x", "x"], "tags": ["abc", frozenset({"d"})]})
+
+    with dask.config.set({"dataframe.convert-string": True}):
+        converted = dd.from_pandas(frame, npartitions=1)
+        assert str(converted.dtypes["tags"]) == "string"
+        mangled = _agg(converted, "tags", "set_union_flatten")["tags"]["x"]
+
+    assert "d" not in mangled, (
+        "if this passes, dask stopped stringifying and the docs can drop the warning"
+    )
+    assert any("frozenset" in str(v) for v in mangled)

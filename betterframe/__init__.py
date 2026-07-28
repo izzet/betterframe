@@ -37,4 +37,4 @@ __all__ = [
     "is_dask_frame",
 ]
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"

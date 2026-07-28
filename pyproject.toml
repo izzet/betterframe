@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "betterframe"
-version = "0.2.0"
+version = "0.2.1"
 description = "Write a dataframe pipeline once, run it on Dask or pandas"
 authors = [{ name = "Izzet Yildirim", email = "izzetcyildirim@gmail.com" }]
 maintainers = [{ name = "Izzet Yildirim", email = "izzetcyildirim@gmail.com" }]
